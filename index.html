@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+	<head>
+		<title> Arduino Web Server </title>
+	</head>
+	<body>
+		<h1> Arduino Web Server </h1>
+		<h2> Toggle buttons</h2>
+		{% for pin in pins %}
+			<h3> {{pins[pin].name}}</h3>
+			{% if pins[pin].state ==1 %}
+					is currently <strong>on</strong></h2><div class="row"><div class="col-md-2">
+					<a href="/{{pin}}/off" class="btn btn-block btn-lg btn-default" role="button">Turn off</a></div></div> 
+			{% else %}
+					is currently <strong>off</strong></h2><div class="row"><div class="col-md-2">
+					<a href="/{{pin}}/on" class="btn btn-block btn-lg btn-primary" role="button">Turn on</a></div></div> 
+			{% endif %}
+		{% endfor %}
+		
+		<h2>Commands</h2>
+		<h3> LED pin 2: <a href="/action1"> TURN ON</a></h3>
+		<h3> LED pin 2: <a href="/action2"> TURN OFF</a></h3>
+		<h3> LED pin 3: <a href="/action3"> TURN ON</a></h3>
+		<h3> LED pin 3: <a href="/action4"> TURN OFF</a></h3>
+	
+		
+	</body>
+</html>
