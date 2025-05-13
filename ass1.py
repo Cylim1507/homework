@@ -1,5 +1,4 @@
 #include <Servo.h>
-#include <LiquidCrystal_I2C.h>
 #include <SPI.h>
 #include <MFRC522.h>
 
@@ -10,7 +9,7 @@
 #define BUZZER_PIN 2
 
 // Authorized UIDs
-String AUTHORIZED_UIDS[] = { " 73 05 E8 A0", " 14 AF 43 D9" };  // Add more as needed
+String AUTHORIZED_UIDS[] = { " 73 05 E8 A0", " 14 AF 43 D9" };
 const int NUM_AUTHORIZED_UIDS = sizeof(AUTHORIZED_UIDS) / sizeof(AUTHORIZED_UIDS[0]);
 
 // State
@@ -24,7 +23,7 @@ const int maxFailedScans = 3;
 
 unsigned long unlockTime = 0;
 bool waitingForItem = false;
-bool continuousAlert = false;  // Alert from Python
+bool continuousAlert = false;  // Python alert
 
 // Components
 Servo servo;
@@ -37,7 +36,7 @@ void softReset() {
 void setup() {
   Serial.begin(9600);
   servo.attach(3);
-  servo.write(70); // Locked
+  servo.write(70); // Locked position
   pinMode(BUZZER_PIN, OUTPUT);
   SPI.begin();
   rfid.PCD_Init();
@@ -46,7 +45,7 @@ void setup() {
 void loop() {
   int fsrReading = analogRead(FSR_PIN);
 
-  // --- Handle Serial Commands from Python ---
+  // --- Serial Commands from Python ---
   if (Serial.available()) {
     char cmd = Serial.read();
     if (cmd == 'F') {
@@ -57,14 +56,22 @@ void loop() {
     }
   }
 
-  // --- Python Alert Logic ---
+  // --- Continuous Alert from Python ---
   if (continuousAlert) {
     if (fsrReading < forceThreshold) {
-      tone(BUZZER_PIN, 1000);  // Keep buzzing
+      tone(BUZZER_PIN, 1000);
     } else {
       noTone(BUZZER_PIN);
       continuousAlert = false;
     }
+  }
+
+  // --- FSR Alert While Locked ---
+  if (isLocked && fsrReading < forceThreshold) {
+    tone(BUZZER_PIN, 1000);
+    delay(500);
+    noTone(BUZZER_PIN);
+    delay(500);
   }
 
   // --- RFID Scan ---
@@ -102,7 +109,7 @@ void loop() {
           waitingForItem = true;
         }
 
-        // ✅ Success beep
+        // ✅ Single beep
         digitalWrite(BUZZER_PIN, HIGH);
         delay(100);
         digitalWrite(BUZZER_PIN, LOW);
@@ -125,7 +132,7 @@ void loop() {
         }
       }
 
-      // Log to Python
+      // Send to Python
       Serial.print("LOG:");
       Serial.print(uid);
       Serial.print(",");
@@ -137,21 +144,20 @@ void loop() {
     }
   }
 
-  // --- After Unlock: Wait 15s then check if item is returned ---
+  // --- Continuous Buzzer After Unlock Timeout ---
   if (!isLocked && waitingForItem) {
     if (millis() - unlockTime >= 15000) {
       if (fsrReading < forceThreshold) {
-        tone(BUZZER_PIN, 1000);  // Buzzer ON
+        tone(BUZZER_PIN, 1000);  // Continuous beep
       } else {
-        noTone(BUZZER_PIN);      // Item is placed back
-        waitingForItem = false;
+        noTone(BUZZER_PIN);
+        waitingForItem = false; // Item is back
       }
     }
   }
 
-  // --- If relocked, reset everything ---
+  // --- Reset if locked again ---
   if (isLocked) {
-    noTone(BUZZER_PIN);
     waitingForItem = false;
   }
 }
