@@ -44,6 +44,11 @@
         try:
             print("🔌 Connecting to serial...")
             ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
+            # Soft reset
+            ser.setDTR(False)
+            time.sleep(1)
+            ser.flushInput()
+            ser.setDTR(True)
             time.sleep(2)  # wait for Arduino to initialize
 
             print("📡 Listening for RFID scans...")
