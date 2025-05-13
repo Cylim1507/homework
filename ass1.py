@@ -1,14 +1,83 @@
-from gpiozero import Buzzer, MCP3008
-from time import sleep
+import pymysql
+import serial
+from datetime import datetime
+import time
 
-# Setup
-buzzer = Buzzer(17)  # GPIO17 (pin 11)
-fsr = MCP3008(channel=0)  # FSR via ADC on channel 0
+# --- Configuration ---
+DB_HOST = "localhost"
+DB_USER = "kali"
+DB_PASSWORD = ""
+DB_NAME = "assignment1"
 
-while True:
-    print(f"Force sensor reading: {fsr.value}")
-    if fsr.value < 0.1:  # Adjust threshold
-        buzzer.on()
-        sleep(0.5)
-        buzzer.off()
-    sleep(0.5)
+SERIAL_PORT = '/dev/ttyS0'  # Use '/dev/ttyACM0' if you're using USB serial
+BAUD_RATE = 9600
+
+
+# --- Database logging function ---
+def log_to_db(uid, status):
+    try:
+        connection = pymysql.connect(
+            host=DB_HOST,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            database=DB_NAME
+        )
+
+        with connection.cursor() as cursor:
+            sql = "INSERT INTO logs (uid, status, timestamp) VALUES (%s, %s, %s)"
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            cursor.execute(sql, (uid, status, timestamp))
+
+        connection.commit()
+        print(f"✅ Logged: UID={uid}, STATUS={status}, TIME={timestamp}")
+
+    except pymysql.MySQLError as e:
+        print(f"❌ MySQL Error: {e}")
+
+    finally:
+        if connection:
+            connection.close()
+
+
+# --- Main loop ---
+def main():
+    try:
+        print("🔌 Connecting to serial...")
+        ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
+        
+        # Soft reset Arduino
+        ser.setDTR(False)
+        time.sleep(1)
+        ser.flushInput()
+        ser.setDTR(True)
+        time.sleep(2)  # wait for Arduino to reboot
+        print("📡 Listening for RFID scans...")
+
+        while True:
+            line = ser.readline().decode('utf-8').strip()
+            if line.startswith("LOG:"):
+                try:
+                    parts = line.split(",")
+                    uid = parts[0][4:].strip()  # remove "LOG:"
+                    status = parts[1].strip()
+
+                    log_to_db(uid, status)
+
+                    # 🚨 Send buzzer signal
+                    if status in ("LOCKED", "UNLOCKED"):
+                        ser.write(b'S')  # Success beep
+                    else:
+                        ser.write(b'F')  # Failure beeps
+
+                except Exception as e:
+                    print(f"⚠️ Failed to parse line: {line} → {e}")
+
+    except serial.SerialException as e:
+        print(f"❌ Serial port error: {e}")
+
+    except KeyboardInterrupt:
+        print("\n🛑 Program terminated by user.")
+
+
+if __name__ == "__main__":
+    main()
