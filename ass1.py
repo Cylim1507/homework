@@ -1,107 +1,68 @@
-import pymysql
-import serial
-from datetime import datetime
-import time
-import RPi.GPIO as GPIO
+#include <SPI.h>
+#include <MFRC522.h>
+#include <Servo.h>
 
-# --- Configuration ---
-DB_HOST = "localhost"
-DB_USER = "kali"
-DB_PASSWORD = ""
-DB_NAME = "assignment1"
+#define RST_PIN         9          // Configurable, see your wiring
+#define SS_PIN          10         // Configurable, see your wiring
+#define BUZZER_PIN      3          // Pin connected to the buzzer
+#define SERVO_PIN       5          // Servo motor pin
 
-SERIAL_PORT = '/dev/ttyS0'  # or '/dev/ttyACM0'
-BAUD_RATE = 9600
-BUZZER_PIN = 17  # GPIO17 (physical pin 11)
+MFRC522 mfrc522(SS_PIN, RST_PIN);
+Servo servo;
 
+String MASTER_UID = "73 C9 2D 20";  // Replace with your actual master UID
+bool isLocked = true;
 
-# --- Setup GPIO ---
-GPIO.setmode(GPIO.BCM)
-GPIO.setup(BUZZER_PIN, GPIO.OUT)
+void setup() {
+  Serial.begin(9600);
+  SPI.begin();
+  mfrc522.PCD_Init();
+  servo.attach(SERVO_PIN);
+  pinMode(BUZZER_PIN, OUTPUT);
+  servo.write(70);  // Initial lock position
+  delay(1000);
+  Serial.println("System ready. Scan RFID tag...");
+}
 
+void loop() {
+  if (!mfrc522.PICC_IsNewCardPresent() || !mfrc522.PICC_ReadCardSerial())
+    return;
 
-def buzz_success():
-    GPIO.output(BUZZER_PIN, GPIO.HIGH)
-    time.sleep(0.5)
-    GPIO.output(BUZZER_PIN, GPIO.LOW)
+  String uid = "";
+  for (byte i = 0; i < mfrc522.uid.size; i++) {
+    uid += String(mfrc522.uid.uidByte[i], HEX);
+    if (i < mfrc522.uid.size - 1)
+      uid += " ";
+  }
+  uid.toUpperCase();
 
+  String status;
+  if (uid == MASTER_UID) {
+    isLocked = !isLocked;
+    status = isLocked ? "LOCKED" : "UNLOCKED";
+    servo.write(isLocked ? 70 : 160);
 
-def buzz_failure():
-    for _ in range(2):
-        GPIO.output(BUZZER_PIN, GPIO.HIGH)
-        time.sleep(0.5)
-        GPIO.output(BUZZER_PIN, GPIO.LOW)
-        time.sleep(0.25)
+    // ✅ Success: turn buzzer ON for 0.5 second
+    digitalWrite(BUZZER_PIN, HIGH);
+    delay(500);
+    digitalWrite(BUZZER_PIN, LOW);
+  } else {
+    status = "DENIED";
 
+    // ❌ Failure: buzzer ON and OFF twice (0.5s each)
+    for (int i = 0; i < 2; i++) {
+      digitalWrite(BUZZER_PIN, HIGH);
+      delay(500);
+      digitalWrite(BUZZER_PIN, LOW);
+      delay(250);  // pause between buzzes
+    }
+  }
 
-# --- Database logging function ---
-def log_to_db(uid, status):
-    try:
-        connection = pymysql.connect(
-            host=DB_HOST,
-            user=DB_USER,
-            password=DB_PASSWORD,
-            database=DB_NAME
-        )
+  Serial.print("LOG:");
+  Serial.print(uid);
+  Serial.print(",");
+  Serial.println(status);
 
-        with connection.cursor() as cursor:
-            sql = "INSERT INTO logs (uid, status, timestamp) VALUES (%s, %s, %s)"
-            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            cursor.execute(sql, (uid, status, timestamp))
-
-        connection.commit()
-        print(f"✅ Logged: UID={uid}, STATUS={status}, TIME={timestamp}")
-
-    except pymysql.MySQLError as e:
-        print(f"❌ MySQL Error: {e}")
-
-    finally:
-        if connection:
-            connection.close()
-
-
-# --- Main loop ---
-def main():
-    try:
-        print("🔌 Connecting to serial...")
-        ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
-        # Soft reset
-        ser.setDTR(False)
-        time.sleep(1)
-        ser.flushInput()
-        ser.setDTR(True)
-        time.sleep(2)
-        print("📡 Listening for RFID scans...")
-
-        while True:
-            line = ser.readline().decode('utf-8').strip()
-            if line.startswith("LOG:"):
-                try:
-                    parts = line.split(",")
-                    uid = parts[0][4:].strip()
-                    status = parts[1].strip()
-
-                    log_to_db(uid, status)
-
-                    # Buzz based on status
-                    if status == "UNLOCKED":
-                        buzz_success()
-                    elif status == "DENIED":
-                        buzz_failure()
-
-                except Exception as e:
-                    print(f"⚠️ Failed to parse line: {line} → {e}")
-
-    except serial.SerialException as e:
-        print(f"❌ Serial port error: {e}")
-
-    except KeyboardInterrupt:
-        print("\n🛑 Program terminated by user.")
-
-    finally:
-        GPIO.cleanup()
-        print("🔌 GPIO cleaned up.")
-
-
-if __name__ == "__main__":
-    main()
+  mfrc522.PICC_HaltA();
+  delay(1000);  // small delay to prevent rapid re-scanning
+}
