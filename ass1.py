@@ -3,23 +3,23 @@
 #include <SPI.h>
 #include <MFRC522.h>
 
-// Pins
+// --- Pin Configuration ---
 #define SS_PIN 10
 #define RST_PIN 9
 #define FSR_PIN A0
 #define BUZZER_PIN 2
 
-// Time tracking
+// --- Time Tracking ---
 unsigned long startTime;
 const unsigned long millisPerSecond = 1000;
 const unsigned long millisPerMinute = millisPerSecond * 60;
 const unsigned long millisPerHour = millisPerMinute * 60;
 
-// Authorized UIDs
-String AUTHORIZED_UIDS[] = { " 73 05 E8 A0", " 14 AF 43 D9" }; // Add more if needed
+// --- Authorized UIDs ---
+String AUTHORIZED_UIDS[] = { " 73 05 E8 A0", " 14 AF 43 D9" }; // Add more as needed
 const int NUM_AUTHORIZED_UIDS = sizeof(AUTHORIZED_UIDS) / sizeof(AUTHORIZED_UIDS[0]);
 
-// Settings
+// --- State & Settings ---
 bool isLocked = true;
 unsigned long lastScanTime = 0;
 const unsigned long scanInterval = 500;
@@ -29,10 +29,11 @@ int startMinute = 0;
 int startSecond = 0;
 int failedScanCount = 0;
 const int maxFailedScans = 3;
+static bool continuousAlert = false; // 🔄 Alert state from Python
 
-// Components
+// --- Components ---
 Servo servo;
-// LiquidCrystal_I2C lcd(0x27, 16, 2); // Optional
+// LiquidCrystal_I2C lcd(0x27, 16, 2); // Optional display
 MFRC522 rfid(SS_PIN, RST_PIN);
 
 void softReset() {
@@ -48,16 +49,13 @@ void setup() {
   pinMode(BUZZER_PIN, OUTPUT);
   SPI.begin();
   rfid.PCD_Init();
-  startTime = millis(); // record boot time
-
-  // lcd.setCursor(4, 0); lcd.print("Welcome!");
-  // lcd.setCursor(1, 1); lcd.print("Put your card");
+  startTime = millis();
 }
 
 void loop() {
   int fsrReading = analogRead(FSR_PIN);
 
-  // Buzzer alert if locked and no pressure
+  // Buzzer if locked & no pressure
   if (isLocked && fsrReading < forceThreshold) {
     tone(BUZZER_PIN, 1000);
     delay(500);
@@ -65,24 +63,7 @@ void loop() {
     delay(500);
   }
 
-  // --- New: Handle serial commands from Python ---
-  if (Serial.available()) {
-    char cmd = Serial.read();
-
-    if (cmd == 'F') {
-      // Failure alert buzzer
-      tone(BUZZER_PIN, 1000);  // 1kHz tone
-      delay(500);
-      noTone(BUZZER_PIN);
-    } else if (cmd == 'S') {
-      // Success alert buzzer
-      tone(BUZZER_PIN, 2000);  // 2kHz tone
-      delay(200);
-      noTone(BUZZER_PIN);
-    }
-  }
-
-  // RFID scanning
+  // --- RFID Check ---
   if (millis() - lastScanTime >= scanInterval) {
     lastScanTime = millis();
 
@@ -113,7 +94,7 @@ void loop() {
         servo.write(isLocked ? 70 : 160);
         failedScanCount = 0;
 
-        // ✅ Success Buzzer ON for 0.5 sec
+        // ✅ Single success beep
         digitalWrite(BUZZER_PIN, HIGH);
         delay(100);
         digitalWrite(BUZZER_PIN, LOW);
@@ -121,14 +102,13 @@ void loop() {
         status = "DENIED";
         failedScanCount++;
 
-        // ❌ Invalid Buzzer ON twice
-        digitalWrite(BUZZER_PIN, HIGH);
-        delay(100);
-        digitalWrite(BUZZER_PIN, LOW);
-        delay(100);
-        digitalWrite(BUZZER_PIN, HIGH);
-        delay(100);
-        digitalWrite(BUZZER_PIN, LOW);
+        // ❌ Double denial beep
+        for (int i = 0; i < 2; i++) {
+          digitalWrite(BUZZER_PIN, HIGH);
+          delay(100);
+          digitalWrite(BUZZER_PIN, LOW);
+          delay(100);
+        }
 
         if (failedScanCount >= maxFailedScans) {
           Serial.println("Too many failed scans. Resetting...");
@@ -137,7 +117,7 @@ void loop() {
         }
       }
 
-      // Log time
+      // --- Log to Serial ---
       Serial.print("LOG:");
       Serial.print(uid);
       Serial.print(",");
@@ -164,7 +144,30 @@ void loop() {
     }
   }
 
-  // Show welcome again (LCD optional)
+  // --- Handle Python Serial Commands ---
+  if (Serial.available()) {
+    char cmd = Serial.read();
+
+    if (cmd == 'F') {
+      continuousAlert = true;
+    } else if (cmd == 'S') {
+      continuousAlert = false;
+      noTone(BUZZER_PIN);
+    }
+  }
+
+  // --- Continuous Alert Buzzer Mode ---
+  if (continuousAlert) {
+    fsrReading = analogRead(FSR_PIN);  // Re-read to get latest value
+    if (fsrReading < forceThreshold) {
+      tone(BUZZER_PIN, 1000);  // Continuous buzzing
+    } else {
+      noTone(BUZZER_PIN);      // Stop buzzer
+      continuousAlert = false; // Reset alert
+    }
+  }
+
+  // (Optional) LCD refresh if used
   if (millis() - lastScanTime >= 2000) {
     // lcd.setCursor(4, 0); lcd.print("Welcome!");
     // lcd.setCursor(1, 1); lcd.print("Put your card");
