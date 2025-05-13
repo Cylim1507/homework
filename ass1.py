@@ -1,83 +1,154 @@
-import pymysql
-import serial
-from datetime import datetime
-import time
+#include <Servo.h>
+#include <LiquidCrystal_I2C.h>
+#include <SPI.h>
+#include <MFRC522.h>
 
-# --- Configuration ---
-DB_HOST = "localhost"
-DB_USER = "kali"
-DB_PASSWORD = ""
-DB_NAME = "assignment1"
+// Pins
+#define SS_PIN 10
+#define RST_PIN 9
+#define FSR_PIN A0
+#define BUZZER_PIN 2
 
-SERIAL_PORT = '/dev/ttyS0'  # Use '/dev/ttyACM0' if you're using USB serial
-BAUD_RATE = 9600
+// Time tracking
+unsigned long startTime;
+const unsigned long millisPerSecond = 1000;
+const unsigned long millisPerMinute = millisPerSecond * 60;
+const unsigned long millisPerHour = millisPerMinute * 60;
 
+// Authorized UIDs
+String AUTHORIZED_UIDS[] = { " 73 05 E8 A0", " 14 AF 43 D9" }; // Add more if needed
+const int NUM_AUTHORIZED_UIDS = sizeof(AUTHORIZED_UIDS) / sizeof(AUTHORIZED_UIDS[0]);
 
-# --- Database logging function ---
-def log_to_db(uid, status):
-    try:
-        connection = pymysql.connect(
-            host=DB_HOST,
-            user=DB_USER,
-            password=DB_PASSWORD,
-            database=DB_NAME
-        )
+// Settings
+bool isLocked = true;
+unsigned long lastScanTime = 0;
+const unsigned long scanInterval = 500;
+int forceThreshold = 100;
+int startHour = 17;
+int startMinute = 0;
+int startSecond = 0;
+int failedScanCount = 0;
+const int maxFailedScans = 3;
 
-        with connection.cursor() as cursor:
-            sql = "INSERT INTO logs (uid, status, timestamp) VALUES (%s, %s, %s)"
-            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            cursor.execute(sql, (uid, status, timestamp))
+// Components
+Servo servo;
+// LiquidCrystal_I2C lcd(0x27, 16, 2); // Optional
+MFRC522 rfid(SS_PIN, RST_PIN);
 
-        connection.commit()
-        print(f"✅ Logged: UID={uid}, STATUS={status}, TIME={timestamp}")
+void softReset() {
+  asm volatile("jmp 0");
+}
 
-    except pymysql.MySQLError as e:
-        print(f"❌ MySQL Error: {e}")
+void setup() {
+  Serial.begin(9600);
+  // lcd.init();
+  // lcd.backlight();
+  servo.attach(3);
+  servo.write(70); // Locked position
+  pinMode(BUZZER_PIN, OUTPUT);
+  SPI.begin();
+  rfid.PCD_Init();
+  startTime = millis(); // record boot time
 
-    finally:
-        if connection:
-            connection.close()
+  // lcd.setCursor(4, 0); lcd.print("Welcome!");
+  // lcd.setCursor(1, 1); lcd.print("Put your card");
+}
 
+void loop() {
+  int fsrReading = analogRead(FSR_PIN);
 
-# --- Main loop ---
-def main():
-    try:
-        print("🔌 Connecting to serial...")
-        ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
-        
-        # Soft reset Arduino
-        ser.setDTR(False)
-        time.sleep(1)
-        ser.flushInput()
-        ser.setDTR(True)
-        time.sleep(2)  # wait for Arduino to reboot
-        print("📡 Listening for RFID scans...")
+  // Buzzer alert if locked and no pressure
+  if (isLocked && fsrReading < forceThreshold) {
+    tone(BUZZER_PIN, 1000);
+    delay(500);
+    noTone(BUZZER_PIN);
+    delay(500);
+  }
 
-        while True:
-            line = ser.readline().decode('utf-8').strip()
-            if line.startswith("LOG:"):
-                try:
-                    parts = line.split(",")
-                    uid = parts[0][4:].strip()  # remove "LOG:"
-                    status = parts[1].strip()
+  if (millis() - lastScanTime >= scanInterval) {
+    lastScanTime = millis();
 
-                    log_to_db(uid, status)
+    if (rfid.PICC_IsNewCardPresent() && rfid.PICC_ReadCardSerial()) {
+      String uid = "";
+      for (byte i = 0; i < rfid.uid.size; i++) {
+        uid += (rfid.uid.uidByte[i] < 0x10 ? " 0" : " ");
+        uid += String(rfid.uid.uidByte[i], HEX);
+      }
+      uid.toUpperCase();
 
-                    # 🚨 Send buzzer signal
-                    if status in ("LOCKED", "UNLOCKED"):
-                        ser.write(b'S')  # Success beep
-                    else:
-                        ser.write(b'F')  # Failure beeps
+      Serial.print("Scanned UID: ");
+      Serial.println(uid);
 
-                except Exception as e:
-                    print(f"⚠️ Failed to parse line: {line} → {e}")
+      String status = "";
+      bool isAuthorized = false;
 
-    except serial.SerialException as e:
-        print(f"❌ Serial port error: {e}")
+      for (int i = 0; i < NUM_AUTHORIZED_UIDS; i++) {
+        if (uid == AUTHORIZED_UIDS[i]) {
+          isAuthorized = true;
+          break;
+        }
+      }
 
-    except KeyboardInterrupt:
-        print("\n🛑 Program terminated by user.")
+      if (isAuthorized) {
+        isLocked = !isLocked;
+        status = isLocked ? "LOCKED" : "UNLOCKED";
+        servo.write(isLocked ? 70 : 160);
+        failedScanCount = 0;
 
+        // ✅ Success Buzzer ON for 0.5 sec
+        digitalWrite(BUZZER_PIN, HIGH);
+        delay(100);
+        digitalWrite(BUZZER_PIN, LOW);
+      } else {
+        status = "DENIED";
+        failedScanCount++;
 
-if __name__ == "__main__":
-    main()
+        // ❌ Invalid Buzzer ON twice for 0.5s each
+        digitalWrite(BUZZER_PIN, HIGH);
+        delay(100);
+        digitalWrite(BUZZER_PIN, LOW);
+        delay(100);
+        digitalWrite(BUZZER_PIN, HIGH);
+        delay(100);
+        digitalWrite(BUZZER_PIN, LOW);
+
+        if (failedScanCount >= maxFailedScans) {
+          Serial.println("Too many failed scans. Resetting...");
+          delay(1000);
+          softReset();
+        }
+      }
+
+      // Log time
+      Serial.print("LOG:");
+      Serial.print(uid);
+      Serial.print(",");
+      Serial.print(status);
+      Serial.print(",");
+
+      unsigned long elapsedMillis = millis() - startTime;
+      unsigned long totalSeconds = elapsedMillis / 1000;
+      int seconds = (startSecond + totalSeconds) % 60;
+      int minutes = (startMinute + (startSecond + totalSeconds) / 60) % 60;
+      int hours = (startHour + (startMinute + (startSecond + totalSeconds) / 60) / 60) % 24;
+
+      Serial.print("Current Time: ");
+      if (hours < 10) Serial.print("0");
+      Serial.print(hours); Serial.print(":");
+      if (minutes < 10) Serial.print("0");
+      Serial.print(minutes); Serial.print(":");
+      if (seconds < 10) Serial.print("0");
+      Serial.println(seconds);
+
+      delay(1000);
+      rfid.PICC_HaltA();
+      rfid.PCD_StopCrypto1();
+    }
+  }
+
+  // Show welcome again (LCD optional)
+  if (millis() - lastScanTime >= 2000) {
+    // lcd.setCursor(4, 0); lcd.print("Welcome!");
+    // lcd.setCursor(1, 1); lcd.print("Put your card");
+  }
+}
