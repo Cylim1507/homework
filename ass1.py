@@ -3,37 +3,31 @@
 #include <SPI.h>
 #include <MFRC522.h>
 
-// --- Pin Configuration ---
+// Pins
 #define SS_PIN 10
 #define RST_PIN 9
 #define FSR_PIN A0
 #define BUZZER_PIN 2
 
-// --- Time Tracking ---
-unsigned long startTime;
-const unsigned long millisPerSecond = 1000;
-const unsigned long millisPerMinute = millisPerSecond * 60;
-const unsigned long millisPerHour = millisPerMinute * 60;
-
-// --- Authorized UIDs ---
-String AUTHORIZED_UIDS[] = { " 73 05 E8 A0", " 14 AF 43 D9" }; // Add more as needed
+// Authorized UIDs
+String AUTHORIZED_UIDS[] = { " 73 05 E8 A0", " 14 AF 43 D9" };  // Add more as needed
 const int NUM_AUTHORIZED_UIDS = sizeof(AUTHORIZED_UIDS) / sizeof(AUTHORIZED_UIDS[0]);
 
-// --- State & Settings ---
+// State
 bool isLocked = true;
 unsigned long lastScanTime = 0;
 const unsigned long scanInterval = 500;
 int forceThreshold = 100;
-int startHour = 17;
-int startMinute = 0;
-int startSecond = 0;
+
 int failedScanCount = 0;
 const int maxFailedScans = 3;
-static bool continuousAlert = false; // 🔄 Alert state from Python
 
-// --- Components ---
+unsigned long unlockTime = 0;
+bool waitingForItem = false;
+bool continuousAlert = false;  // Alert from Python
+
+// Components
 Servo servo;
-// LiquidCrystal_I2C lcd(0x27, 16, 2); // Optional display
 MFRC522 rfid(SS_PIN, RST_PIN);
 
 void softReset() {
@@ -42,28 +36,38 @@ void softReset() {
 
 void setup() {
   Serial.begin(9600);
-  // lcd.init();
-  // lcd.backlight();
   servo.attach(3);
-  servo.write(70); // Locked position
+  servo.write(70); // Locked
   pinMode(BUZZER_PIN, OUTPUT);
   SPI.begin();
   rfid.PCD_Init();
-  startTime = millis();
 }
 
 void loop() {
   int fsrReading = analogRead(FSR_PIN);
 
-  // Buzzer if locked & no pressure
-  if (isLocked && fsrReading < forceThreshold) {
-    tone(BUZZER_PIN, 1000);
-    delay(500);
-    noTone(BUZZER_PIN);
-    delay(500);
+  // --- Handle Serial Commands from Python ---
+  if (Serial.available()) {
+    char cmd = Serial.read();
+    if (cmd == 'F') {
+      continuousAlert = true;
+    } else if (cmd == 'S') {
+      continuousAlert = false;
+      noTone(BUZZER_PIN);
+    }
   }
 
-  // --- RFID Check ---
+  // --- Python Alert Logic ---
+  if (continuousAlert) {
+    if (fsrReading < forceThreshold) {
+      tone(BUZZER_PIN, 1000);  // Keep buzzing
+    } else {
+      noTone(BUZZER_PIN);
+      continuousAlert = false;
+    }
+  }
+
+  // --- RFID Scan ---
   if (millis() - lastScanTime >= scanInterval) {
     lastScanTime = millis();
 
@@ -80,7 +84,6 @@ void loop() {
 
       String status = "";
       bool isAuthorized = false;
-
       for (int i = 0; i < NUM_AUTHORIZED_UIDS; i++) {
         if (uid == AUTHORIZED_UIDS[i]) {
           isAuthorized = true;
@@ -94,7 +97,12 @@ void loop() {
         servo.write(isLocked ? 70 : 160);
         failedScanCount = 0;
 
-        // ✅ Single success beep
+        if (!isLocked) {
+          unlockTime = millis();
+          waitingForItem = true;
+        }
+
+        // ✅ Success beep
         digitalWrite(BUZZER_PIN, HIGH);
         delay(100);
         digitalWrite(BUZZER_PIN, LOW);
@@ -102,7 +110,7 @@ void loop() {
         status = "DENIED";
         failedScanCount++;
 
-        // ❌ Double denial beep
+        // ❌ Double beep
         for (int i = 0; i < 2; i++) {
           digitalWrite(BUZZER_PIN, HIGH);
           delay(100);
@@ -117,26 +125,11 @@ void loop() {
         }
       }
 
-      // --- Log to Serial ---
+      // Log to Python
       Serial.print("LOG:");
       Serial.print(uid);
       Serial.print(",");
-      Serial.print(status);
-      Serial.print(",");
-
-      unsigned long elapsedMillis = millis() - startTime;
-      unsigned long totalSeconds = elapsedMillis / 1000;
-      int seconds = (startSecond + totalSeconds) % 60;
-      int minutes = (startMinute + (startSecond + totalSeconds) / 60) % 60;
-      int hours = (startHour + (startMinute + (startSecond + totalSeconds) / 60) / 60) % 24;
-
-      Serial.print("Current Time: ");
-      if (hours < 10) Serial.print("0");
-      Serial.print(hours); Serial.print(":");
-      if (minutes < 10) Serial.print("0");
-      Serial.print(minutes); Serial.print(":");
-      if (seconds < 10) Serial.print("0");
-      Serial.println(seconds);
+      Serial.println(status);
 
       delay(1000);
       rfid.PICC_HaltA();
@@ -144,32 +137,21 @@ void loop() {
     }
   }
 
-  // --- Handle Python Serial Commands ---
-  if (Serial.available()) {
-    char cmd = Serial.read();
-
-    if (cmd == 'F') {
-      continuousAlert = true;
-    } else if (cmd == 'S') {
-      continuousAlert = false;
-      noTone(BUZZER_PIN);
+  // --- After Unlock: Wait 15s then check if item is returned ---
+  if (!isLocked && waitingForItem) {
+    if (millis() - unlockTime >= 15000) {
+      if (fsrReading < forceThreshold) {
+        tone(BUZZER_PIN, 1000);  // Buzzer ON
+      } else {
+        noTone(BUZZER_PIN);      // Item is placed back
+        waitingForItem = false;
+      }
     }
   }
 
-  // --- Continuous Alert Buzzer Mode ---
-  if (continuousAlert) {
-    fsrReading = analogRead(FSR_PIN);  // Re-read to get latest value
-    if (fsrReading < forceThreshold) {
-      tone(BUZZER_PIN, 1000);  // Continuous buzzing
-    } else {
-      noTone(BUZZER_PIN);      // Stop buzzer
-      continuousAlert = false; // Reset alert
-    }
-  }
-
-  // (Optional) LCD refresh if used
-  if (millis() - lastScanTime >= 2000) {
-    // lcd.setCursor(4, 0); lcd.print("Welcome!");
-    // lcd.setCursor(1, 1); lcd.print("Put your card");
+  // --- If relocked, reset everything ---
+  if (isLocked) {
+    noTone(BUZZER_PIN);
+    waitingForItem = false;
   }
 }
