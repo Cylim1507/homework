@@ -65,6 +65,24 @@ void loop() {
     delay(500);
   }
 
+  // --- New: Handle serial commands from Python ---
+  if (Serial.available()) {
+    char cmd = Serial.read();
+
+    if (cmd == 'F') {
+      // Failure alert buzzer
+      tone(BUZZER_PIN, 1000);  // 1kHz tone
+      delay(500);
+      noTone(BUZZER_PIN);
+    } else if (cmd == 'S') {
+      // Success alert buzzer
+      tone(BUZZER_PIN, 2000);  // 2kHz tone
+      delay(200);
+      noTone(BUZZER_PIN);
+    }
+  }
+
+  // RFID scanning
   if (millis() - lastScanTime >= scanInterval) {
     lastScanTime = millis();
 
@@ -103,7 +121,7 @@ void loop() {
         status = "DENIED";
         failedScanCount++;
 
-        // ❌ Invalid Buzzer ON twice for 0.5s each
+        // ❌ Invalid Buzzer ON twice
         digitalWrite(BUZZER_PIN, HIGH);
         delay(100);
         digitalWrite(BUZZER_PIN, LOW);
