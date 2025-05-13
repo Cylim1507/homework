@@ -2,6 +2,7 @@ import pymysql
 import serial
 from datetime import datetime
 import time
+import RPi.GPIO as GPIO
 
 # --- Configuration ---
 DB_HOST = "localhost"
@@ -11,6 +12,26 @@ DB_NAME = "assignment1"
 
 SERIAL_PORT = '/dev/ttyS0'  # or '/dev/ttyACM0'
 BAUD_RATE = 9600
+BUZZER_PIN = 17  # GPIO17 (physical pin 11)
+
+
+# --- Setup GPIO ---
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(BUZZER_PIN, GPIO.OUT)
+
+
+def buzz_success():
+    GPIO.output(BUZZER_PIN, GPIO.HIGH)
+    time.sleep(0.5)
+    GPIO.output(BUZZER_PIN, GPIO.LOW)
+
+
+def buzz_failure():
+    for _ in range(2):
+        GPIO.output(BUZZER_PIN, GPIO.HIGH)
+        time.sleep(0.5)
+        GPIO.output(BUZZER_PIN, GPIO.LOW)
+        time.sleep(0.25)
 
 
 # --- Database logging function ---
@@ -49,17 +70,25 @@ def main():
         time.sleep(1)
         ser.flushInput()
         ser.setDTR(True)
-        time.sleep(2)  # wait for Arduino to initialize
+        time.sleep(2)
         print("📡 Listening for RFID scans...")
+
         while True:
             line = ser.readline().decode('utf-8').strip()
             if line.startswith("LOG:"):
                 try:
                     parts = line.split(",")
-                    uid = parts[0][4:].strip()  # remove "LOG:"
+                    uid = parts[0][4:].strip()
                     status = parts[1].strip()
-                    # timestamp is generated from Raspberry Pi time
+
                     log_to_db(uid, status)
+
+                    # Buzz based on status
+                    if status == "UNLOCKED":
+                        buzz_success()
+                    elif status == "DENIED":
+                        buzz_failure()
+
                 except Exception as e:
                     print(f"⚠️ Failed to parse line: {line} → {e}")
 
@@ -68,6 +97,10 @@ def main():
 
     except KeyboardInterrupt:
         print("\n🛑 Program terminated by user.")
+
+    finally:
+        GPIO.cleanup()
+        print("🔌 GPIO cleaned up.")
 
 
 if __name__ == "__main__":
