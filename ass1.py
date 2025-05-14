@@ -1,69 +1,91 @@
+import pymysql
 import serial
-import datetime
-import csv
-from time import sleep
+from datetime import datetime
+import time
 
-# Configuration
-SERIAL_PORT = 'COM3'  # Change to your Arduino's serial port
+# --- Configuration ---
+DB_HOST = "localhost"
+DB_USER = "kali"
+DB_PASSWORD = ""
+DB_NAME = "assignment1"
+
+SERIAL_PORT = '/dev/ttyS0'
 BAUD_RATE = 9600
-LOG_FILE = 'rfid_access_log.csv'
 
-def setup_serial_connection():
+# --- Database logging function ---
+def log_to_db(uid, status):
     try:
-        ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
-        sleep(2)  # Wait for connection to establish
-        print(f"Connected to {SERIAL_PORT} at {BAUD_RATE} baud")
-        return ser
-    except serial.SerialException as e:
-        print(f"Failed to connect to {SERIAL_PORT}: {e}")
-        return None
+        connection = pymysql.connect(
+            host=DB_HOST,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            database=DB_NAME
+        )
 
-def log_access(uid, status, timestamp):
-    with open(LOG_FILE, 'a', newline='') as csvfile:
-        writer = csv.writer(csvfile)
-        # Write header if file is empty
-        if csvfile.tell() == 0:
-            writer.writerow(['Timestamp', 'UID', 'Status'])
-        writer.writerow([timestamp, uid.strip(), status])
+        with connection.cursor() as cursor:
+            sql = "INSERT INTO logs (uid, status, timestamp) VALUES (%s, %s, %s)"
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            cursor.execute(sql, (uid, status, timestamp))
 
-def monitor_serial(ser):
-    print("Monitoring serial port... Press Ctrl+C to exit")
-    try:
-        while True:
-            if ser.in_waiting > 0:
-                line = ser.readline().decode('utf-8').strip()
-                
-                # Parse the Arduino's output
-                if line.startswith("Scanned UID:"):
-                    current_uid = line.replace("Scanned UID:", "").strip()
-                    print(f"Card scanned: {current_uid}")
-                
-                elif line.startswith("LOG:"):
-                    parts = line.split(",")
-                    if len(parts) >= 3:
-                        uid = parts[0].replace("LOG:", "").strip()
-                        status = parts[1].strip()
-                        timestamp = parts[2].replace("Current Time: ", "").strip()
-                        
-                        # Get current system time for logging
-                        log_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        print(f"{log_time} - {uid} - {status} - Device Time: {timestamp}")
-                        log_access(uid, status, log_time)
-                
-                else:
-                    if line:  # Only print non-empty lines
-                        print(line)
-    
-    except KeyboardInterrupt:
-        print("\nExiting...")
+        connection.commit()
+        print(f"✅ Logged: UID={uid}, STATUS={status}, TIME={timestamp}")
+
+    except pymysql.MySQLError as e:
+        print(f"❌ MySQL Error: {e}")
+
     finally:
-        if ser.is_open:
-            ser.close()
+        if connection:
+            connection.close()
 
+# --- Main loop ---
 def main():
-    ser = setup_serial_connection()
-    if ser:
-        monitor_serial(ser)
+    try:
+        print("🔌 Connecting to serial...")
+        ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
+        
+        # Soft reset Arduino
+        ser.setDTR(False)
+        time.sleep(1)
+        ser.flushInput()
+        ser.setDTR(True)
+        time.sleep(2)
+        print("📡 Listening for RFID scans...")
+
+        last_activity_time = time.time()
+        door_unlocked = False
+
+        while True:
+            line = ser.readline().decode('utf-8').strip()
+            current_time = time.time()
+
+            if line.startswith("LOG:"):
+                try:
+                    parts = line.split(",")
+                    uid = parts[0][4:].strip()
+                    status = parts[1].strip()
+
+                    log_to_db(uid, status)
+
+                    # 🔄 Edge analytics: Update state
+                    last_activity_time = current_time
+                    door_unlocked = (status == "UNLOCKED")
+
+                except Exception as e:
+                    print(f"⚠️ Failed to parse line: {line} → {e}")
+
+            # 🔄 Edge analytics: Check inactivity timeout
+            elif door_unlocked and (current_time - last_activity_time >= 15):
+                print("⏰ No activity for 15 seconds after UNLOCK → Trigger buzzer!")
+                # No more ser.write(b'F') here — Arduino handles it now
+                door_unlocked = False
+
+            time.sleep(0.1)  # Prevent high CPU usage
+
+    except serial.SerialException as e:
+        print(f"❌ Serial port error: {e}")
+
+    except KeyboardInterrupt:
+        print("\n🛑 Program terminated by user.")
 
 if __name__ == "__main__":
     main()
