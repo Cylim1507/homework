@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>IoT Logs Dashboard</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 30px;
+            background-color: #f4f4f4;
+        }
+        h1 {
+            text-align: center;
+        }
+        .summary, .logs, .control {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px auto;
+            width: 90%;
+            max-width: 800px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        table th, table td {
+            padding: 10px;
+            border: 1px solid #ddd;
+            text-align: center;
+        }
+        .form-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .form-row input[type="number"] {
+            width: 100px;
+        }
+        .btn {
+            padding: 8px 16px;
+            margin-top: 10px;
+            background-color: #3498db;
+            color: white;
+            border: none;
+            cursor: pointer;
+            border-radius: 5px;
+        }
+        .btn:hover {
+            background-color: #2980b9;
+        }
+    </style>
+</head>
+<body>
+
+<h1>RFID Access Log Dashboard</h1>
+
+<div class="summary">
+    <h2>📊 Summary</h2>
+    <p><strong>Total Entries:</strong> {{ summary.total }}</p>
+    <p><strong>Unlocked Count:</strong> {{ summary.unlocks }}</p>
+    <p><strong>Locked Count:</strong> {{ summary.locks }}</p>
+    <p><strong>Avg. Interval Between Unlocks:</strong> {{ avg_interval }} seconds</p>
+</div>
+
+<div class="logs">
+    <h2>📄 Recent Log Entries</h2>
+    <table>
+        <thead>
+        <tr>
+            <th>ID</th>
+            <th>UID</th>
+            <th>Status</th>
+            <th>Timestamp</th>
+        </tr>
+        </thead>
+        <tbody>
+        {% for log in logs %}
+        <tr>
+            <td>{{ log.id }}</td>
+            <td>{{ log.uid }}</td>
+            <td>{{ log.status }}</td>
+            <td>{{ log.timestamp }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div class="control">
+    <h2>⚙️ Controls</h2>
+    <form method="POST" action="/update_threshold">
+        <div class="form-row">
+            <label for="threshold">Alarm Trigger Delay (seconds):</label>
+            <input type="number" id="threshold" name="threshold" value="{{ threshold }}" min="1">
+        </div>
+        <button type="submit" class="btn">Update Threshold</button>
+    </form>
+
+    <form method="POST" action="/trigger_alarm">
+        <div class="form-row">
+            <label>Manual Alarm Trigger:</label>
+            <button type="submit" name="alarm" value="ON" class="btn">Trigger Alarm</button>
+        </div>
+    </form>
+</div>
+
+</body>
+</html>
