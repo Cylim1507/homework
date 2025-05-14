@@ -1,111 +1,103 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>IoT Logs Dashboard</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            padding: 30px;
-            background-color: #f4f4f4;
-        }
-        h1 {
-            text-align: center;
-        }
-        .summary, .logs, .control {
-            background: white;
-            border-radius: 8px;
-            padding: 20px;
-            margin: 20px auto;
-            width: 90%;
-            max-width: 800px;
-            box-shadow: 0 0 10px rgba(0,0,0,0.1);
-        }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 10px;
-        }
-        table th, table td {
-            padding: 10px;
-            border: 1px solid #ddd;
-            text-align: center;
-        }
-        .form-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .form-row input[type="number"] {
-            width: 100px;
-        }
-        .btn {
-            padding: 8px 16px;
-            margin-top: 10px;
-            background-color: #3498db;
-            color: white;
-            border: none;
-            cursor: pointer;
-            border-radius: 5px;
-        }
-        .btn:hover {
-            background-color: #2980b9;
-        }
-    </style>
-</head>
-<body>
+from flask import Flask, render_template, request, jsonify
+import mysql.connector
+from datetime import datetime, timedelta
+import json
 
-<h1>RFID Access Log Dashboard</h1>
+app = Flask(__name__)
 
-<div class="summary">
-    <h2>📊 Summary</h2>
-    <p><strong>Total Entries:</strong> {{ summary.total }}</p>
-    <p><strong>Unlocked Count:</strong> {{ summary.unlocks }}</p>
-    <p><strong>Locked Count:</strong> {{ summary.locks }}</p>
-    <p><strong>Avg. Interval Between Unlocks:</strong> {{ avg_interval }} seconds</p>
-</div>
+# Database configuration
+db_config = {
+    'host': 'localhost',
+    'user': 'root',
+    'password': '',  # Add your password if set
+    'database': 'assignment1'
+}
 
-<div class="logs">
-    <h2>📄 Recent Log Entries</h2>
-    <table>
-        <thead>
-        <tr>
-            <th>ID</th>
-            <th>UID</th>
-            <th>Status</th>
-            <th>Timestamp</th>
-        </tr>
-        </thead>
-        <tbody>
-        {% for log in logs %}
-        <tr>
-            <td>{{ log.id }}</td>
-            <td>{{ log.uid }}</td>
-            <td>{{ log.status }}</td>
-            <td>{{ log.timestamp }}</td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-</div>
+def get_db_connection():
+    return mysql.connector.connect(**db_config)
 
-<div class="control">
-    <h2>⚙️ Controls</h2>
-    <form method="POST" action="/update_threshold">
-        <div class="form-row">
-            <label for="threshold">Alarm Trigger Delay (seconds):</label>
-            <input type="number" id="threshold" name="threshold" value="{{ threshold }}" min="1">
-        </div>
-        <button type="submit" class="btn">Update Threshold</button>
-    </form>
+@app.route('/')
+def dashboard():
+    return render_template('dashboard.html')
 
-    <form method="POST" action="/trigger_alarm">
-        <div class="form-row">
-            <label>Manual Alarm Trigger:</label>
-            <button type="submit" name="alarm" value="ON" class="btn">Trigger Alarm</button>
-        </div>
-    </form>
-</div>
+@app.route('/api/logs')
+def get_logs():
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    
+    # Get last 50 logs
+    cursor.execute("SELECT * FROM logs ORDER BY timestamp DESC LIMIT 50")
+    logs = cursor.fetchall()
+    
+    # Calculate statistics
+    cursor.execute("""
+        SELECT 
+            COUNT(*) as total_entries,
+            SUM(status = 'UNLOCKED') as unlock_count,
+            MIN(timestamp) as first_entry,
+            MAX(timestamp) as last_entry
+        FROM logs
+    """)
+    stats = cursor.fetchone()
+    
+    # Calculate average unlocked duration
+    cursor.execute("""
+        SELECT AVG(duration) as avg_unlock_time FROM (
+            SELECT TIMESTAMPDIFF(SECOND, a.timestamp, b.timestamp) as duration
+            FROM logs a
+            JOIN logs b ON a.id = b.id - 1
+            WHERE a.status = 'UNLOCKED' AND b.status = 'LOCKED'
+        ) as durations
+    """)
+    duration_stats = cursor.fetchone()
+    
+    conn.close()
+    
+    return jsonify({
+        'logs': logs,
+        'stats': stats,
+        'duration_stats': duration_stats
+    })
 
-</body>
-</html>
+@app.route('/api/rules', methods=['GET', 'POST'])
+def manage_rules():
+    if request.method == 'POST':
+        # Update rules in database
+        data = request.json
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # This is a simplified example - you'd need a rules table
+        cursor.execute("""
+            INSERT INTO rules (alarm_delay, force_threshold) 
+            VALUES (%s, %s)
+            ON DUPLICATE KEY UPDATE
+            alarm_delay = VALUES(alarm_delay),
+            force_threshold = VALUES(force_threshold)
+        """, (data['alarm_delay'], data['force_threshold']))
+        
+        conn.commit()
+        conn.close()
+        return jsonify({'status': 'success'})
+    else:
+        # Get current rules
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT * FROM rules LIMIT 1")
+        rules = cursor.fetchone() or {
+            'alarm_delay': 15,
+            'force_threshold': 100
+        }
+        conn.close()
+        return jsonify(rules)
+
+@app.route('/api/trigger', methods=['POST'])
+def trigger_action():
+    action = request.json.get('action')
+    # Here you would send a command to your IoT device
+    # For now we'll just log it
+    print(f"Triggering action: {action}")
+    return jsonify({'status': 'success', 'action': action})
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=True)
