@@ -5,7 +5,7 @@ from time import sleep, time
 from threading import Timer
 
 # Configuration
-SERIAL_PORT = 'COM3'  # Change to your Arduino's serial port
+SERIAL_PORT = '/dev/ttyS0'  # Change to your Arduino's serial port
 BAUD_RATE = 9600
 LOG_FILE = 'rfid_access_log.csv'
 ALARM_DELAY = 15  # seconds to wait before triggering alarm when empty while unlocked
