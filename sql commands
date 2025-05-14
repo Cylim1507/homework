@@ -19,12 +19,9 @@ FROM logs
 GROUP BY uid;
 
 4. Count of ALARM_TRIGGERED events
-SELECT 
-    (SELECT COUNT(*) 
-     FROM logs 
-     WHERE status = 'ALARM_TRIGGERED') AS alarm_trigger_count,
-    GROUP_CONCAT(DATE_FORMAT(timestamp, '%Y-%m-%d %H:%i:%s') ORDER BY timestamp SEPARATOR '\n') AS alarm_timestamps
-FROM dual;
+SELECT uid, timestamp
+FROM logs
+WHERE status = 'ALARM_TRIGGERED';
 
 5. Daily Access Summary (count per day)
 SELECT DATE(timestamp) AS date, COUNT(*) AS total_logs
