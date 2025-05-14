@@ -5,11 +5,11 @@ import json
 
 app = Flask(__name__)
 
-# Database configuration - UPDATE THESE VALUES
+# Database configuration
 db_config = {
     'host': 'localhost',
-    'user': 'root',          # Change if different
-    'password': 'password',  # Add your MySQL password
+    'user': 'kali',
+    'password': '',  # Add your password if set
     'database': 'assignment1'
 }
 
@@ -23,13 +23,94 @@ def get_db_connection():
 
 @app.route('/')
 def dashboard():
-    conn = get_db_connection()
-    if conn is None:
-        return "Could not connect to database", 500
-    conn.close()
     return render_template('dashboard.html')
 
-# ... [rest of your code remains the same] ...
+@app.route('/api/logs')
+def get_logs():
+    conn = get_db_connection()
+    if conn is None:
+        return jsonify({'error': 'Database connection failed'}), 500
+        
+    cursor = conn.cursor(dictionary=True)
+    
+    # Get last 50 logs
+    cursor.execute("SELECT * FROM logs ORDER BY timestamp DESC LIMIT 50")
+    logs = cursor.fetchall()
+    
+    # Calculate statistics
+    cursor.execute("""
+        SELECT 
+            COUNT(*) as total_entries,
+            SUM(status = 'UNLOCKED') as unlock_count,
+            MIN(timestamp) as first_entry,
+            MAX(timestamp) as last_entry
+        FROM logs
+    """)
+    stats = cursor.fetchone()
+    
+    # Calculate average unlocked duration
+    cursor.execute("""
+        SELECT AVG(duration) as avg_unlock_time FROM (
+            SELECT TIMESTAMPDIFF(SECOND, a.timestamp, b.timestamp) as duration
+            FROM logs a
+            JOIN logs b ON a.id = b.id - 1
+            WHERE a.status = 'UNLOCKED' AND b.status = 'LOCKED'
+        ) as durations
+    """)
+    duration_stats = cursor.fetchone()
+    
+    conn.close()
+    
+    return jsonify({
+        'logs': logs,
+        'stats': stats,
+        'duration_stats': duration_stats
+    })
+
+@app.route('/api/rules', methods=['GET', 'POST'])
+def manage_rules():
+    if request.method == 'POST':
+        # Update rules in database
+        data = request.json
+        conn = get_db_connection()
+        if conn is None:
+            return jsonify({'error': 'Database connection failed'}), 500
+            
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            INSERT INTO rules (alarm_delay, force_threshold) 
+            VALUES (%s, %s)
+            ON DUPLICATE KEY UPDATE
+            alarm_delay = VALUES(alarm_delay),
+            force_threshold = VALUES(force_threshold)
+        """, (data['alarm_delay'], data['force_threshold']))
+        
+        conn.commit()
+        conn.close()
+        return jsonify({'status': 'success'})
+    else:
+        # Get current rules
+        conn = get_db_connection()
+        if conn is None:
+            return jsonify({'error': 'Database connection failed'}), 500
+            
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT * FROM rules LIMIT 1")
+        rules = cursor.fetchone() or {
+            'alarm_delay': 15,
+            'force_threshold': 100
+        }
+        conn.close()
+        return jsonify(rules)
+
+@app.route('/api/trigger', methods=['POST'])
+def trigger_action():
+    action = request.json.get('action')
+    # Here you would send a command to your IoT device
+    # For now we'll just log it
+    print(f"Triggering action: {action}")
+    return jsonify({'status': 'success', 'action': action})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
