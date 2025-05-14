@@ -42,7 +42,7 @@ def main():
     try:
         print("🔌 Connecting to serial...")
         ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
-        
+
         # Soft reset Arduino
         ser.setDTR(False)
         time.sleep(1)
@@ -70,14 +70,17 @@ def main():
                     last_activity_time = current_time
                     door_unlocked = (status == "UNLOCKED")
 
+                    # Buzz briefly for RFID scan
+                    ser.write(b'S\n')  # Tell Arduino to buzz for 0.5s
+
                 except Exception as e:
                     print(f"⚠️ Failed to parse line: {line} → {e}")
 
             # 🔄 Edge analytics: Check inactivity timeout
-            elif door_unlocked and (current_time - last_activity_time >= 15):
-                print("⏰ No activity for 15 seconds after UNLOCK → Trigger buzzer!")
-                # No more ser.write(b'F') here — Arduino handles it now
-                door_unlocked = False
+            elif door_unlocked and (current_time - last_activity_time >= 10):
+                print("🚨 Pad is empty for 10 seconds while unlocked → TRIGGER BUZZER!")
+                ser.write(b'F\n')  # Tell Arduino to buzz longer
+                door_unlocked = False  # Prevent repeated buzz
 
             time.sleep(0.1)  # Prevent high CPU usage
 
