@@ -1,0 +1,43 @@
+SQL commands :
+1. Count of Entries per UID
+SELECT uid, COUNT(*) AS total_entries
+FROM logs
+GROUP BY uid;
+
+2. First and Last Access Time for Each UID
+SELECT uid,
+       MIN(timestamp) AS first_access,
+       MAX(timestamp) AS last_access
+FROM logs
+GROUP BY uid;
+
+3. Count of LOCKED and UNLOCKED status per UID
+SELECT uid,
+       SUM(status = 'LOCKED') AS times_locked,
+       SUM(status = 'UNLOCKED') AS times_unlocked
+FROM logs
+GROUP BY uid;
+
+4. Count of ALARM_TRIGGERED events
+SELECT COUNT(*) AS alarm_trigger_count
+FROM logs
+WHERE status = 'ALARM_TRIGGERED';
+
+5. Daily Access Summary (count per day)
+SELECT DATE(timestamp) AS date, COUNT(*) AS total_logs
+FROM logs
+GROUP BY DATE(timestamp)
+ORDER BY date;
+
+6. Mean Time Interval Between Events for a UID
+SELECT AVG(diff_seconds) AS avg_interval_seconds
+FROM (
+    SELECT TIMESTAMPDIFF(SECOND, 
+            LAG(timestamp) OVER (ORDER BY timestamp), 
+            timestamp) AS diff_seconds
+    FROM logs
+    WHERE uid = '73 05 E8 A0'
+) AS intervals
+WHERE diff_seconds IS NOT NULL;
+
+
