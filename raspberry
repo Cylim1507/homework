@@ -11,8 +11,6 @@ DB_NAME = "assignment1"
 
 SERIAL_PORT = '/dev/ttyS0'
 BAUD_RATE = 9600
-PRESSURE_THRESHOLD = 100  # Adjust based on your sensor's empty value
-EMPTY_TIMEOUT = 10        # seconds
 
 # --- Database logging function ---
 def log_to_db(uid, status):
@@ -54,7 +52,6 @@ def main():
         print("📡 Listening for RFID scans...")
 
         last_activity_time = time.time()
-        empty_start_time = None
         door_unlocked = False
 
         while True:
@@ -69,41 +66,20 @@ def main():
 
                     log_to_db(uid, status)
 
-                    # 🔄 Update state
+                    # 🔄 Edge analytics: Update state
                     last_activity_time = current_time
                     door_unlocked = (status == "UNLOCKED")
-                    empty_start_time = None  # Reset pressure tracking on new scan
 
                 except Exception as e:
                     print(f"⚠️ Failed to parse line: {line} → {e}")
 
-            elif line.startswith("PRESSURE:"):
-                try:
-                    pressure = int(line.split(":")[1].strip())
-                    print(f"📉 Pressure reading: {pressure}")
-
-                    if door_unlocked and pressure < PRESSURE_THRESHOLD:
-                        if empty_start_time is None:
-                            empty_start_time = current_time
-                            print("🛏️ Pad is empty while unlocked — started timer")
-                        elif current_time - empty_start_time >= EMPTY_TIMEOUT:
-                            print("🚨 Pad is empty for 10 seconds while unlocked → TRIGGER BUZZER!")
-                            empty_start_time = None  # Prevent repeated alerts
-                    else:
-                        if empty_start_time is not None:
-                            print("🟢 Pad no longer empty or door locked → reset timer")
-                        empty_start_time = None
-
-                except Exception as e:
-                    print(f"⚠️ Failed to parse pressure line: {line} → {e}")
-
-            # 🔄 Old rule: timeout after unlock
+            # 🔄 Edge analytics: Check inactivity timeout
             elif door_unlocked and (current_time - last_activity_time >= 15):
-                print("⏰ No RFID activity for 15 seconds after UNLOCK → Trigger buzzer!")
+                print("⏰ No activity for 15 seconds after UNLOCK → Trigger buzzer!")
+                # No more ser.write(b'F') here — Arduino handles it now
                 door_unlocked = False
-                empty_start_time = None
 
-            time.sleep(0.1)
+            time.sleep(0.1)  # Prevent high CPU usage
 
     except serial.SerialException as e:
         print(f"❌ Serial port error: {e}")
