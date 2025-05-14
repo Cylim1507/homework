@@ -1,14 +1,12 @@
 import serial
 import datetime
-import csv
-import mysql.connector  # ✅ NEW
+import mysql.connector
 from time import sleep, time
 from threading import Timer
 
 # Configuration
 SERIAL_PORT = '/dev/ttyS0'  # Arduino serial port
 BAUD_RATE = 9600
-LOG_FILE = 'rfid_access_log.csv'
 ALARM_DELAY = 15  # seconds
 DB_CONFIG = {
     'host': 'localhost',
@@ -47,14 +45,7 @@ class RFIDMonitor:
             print(f"Database connection error: {e}")
 
     def log_access(self, uid, status, timestamp):
-        # Log to CSV
-        with open(LOG_FILE, 'a', newline='') as csvfile:
-            writer = csv.writer(csvfile)
-            if csvfile.tell() == 0:
-                writer.writerow(['Timestamp', 'UID', 'Status'])
-            writer.writerow([timestamp, uid.strip(), status])
-
-        # Log to MySQL
+        # Log to MySQL only
         if self.db_conn and self.db_cursor:
             try:
                 query = "INSERT INTO logs (uid, status, timestamp) VALUES (%s, %s, %s)"
@@ -91,7 +82,7 @@ class RFIDMonitor:
             if len(parts) >= 2:
                 uid = parts[0].replace("LOG:", "").strip()
                 status = parts[1].strip()
-                
+
                 self.current_status = status
 
                 if "UNLOCKED" in status:
