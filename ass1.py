@@ -1,14 +1,19 @@
 import serial
 import datetime
-import csv
+import mysql.connector
 from time import sleep, time
 from threading import Timer
 
 # Configuration
-SERIAL_PORT = '/dev/ttyS0'  # Change to your Arduino's serial port
+SERIAL_PORT = '/dev/ttyS0'  # Arduino serial port
 BAUD_RATE = 9600
-LOG_FILE = 'rfid_access_log.csv'
-ALARM_DELAY = 15  # seconds to wait before triggering alarm when empty while unlocked
+ALARM_DELAY = 15  # seconds
+DB_CONFIG = {
+    'host': 'localhost',
+    'user': 'kali',
+    'password': '',
+    'database': 'assignment1'
+}
 
 class RFIDMonitor:
     def __init__(self):
@@ -18,6 +23,8 @@ class RFIDMonitor:
         self.alarm_timer = None
         self.current_status = "LOCKED"
         self.fsr_state = "UNKNOWN"
+        self.db_conn = None
+        self.db_cursor = None
 
     def setup_serial_connection(self):
         try:
@@ -29,12 +36,23 @@ class RFIDMonitor:
             print(f"Failed to connect to {SERIAL_PORT}: {e}")
             return False
 
+    def setup_database_connection(self):
+        try:
+            self.db_conn = mysql.connector.connect(**DB_CONFIG)
+            self.db_cursor = self.db_conn.cursor()
+            print("Connected to MySQL database")
+        except mysql.connector.Error as e:
+            print(f"Database connection error: {e}")
+
     def log_access(self, uid, status, timestamp):
-        with open(LOG_FILE, 'a', newline='') as csvfile:
-            writer = csv.writer(csvfile)
-            if csvfile.tell() == 0:
-                writer.writerow(['Timestamp', 'UID', 'Status'])
-            writer.writerow([timestamp, uid.strip(), status])
+        # Log to MySQL only
+        if self.db_conn and self.db_cursor:
+            try:
+                query = "INSERT INTO logs (uid, status, timestamp) VALUES (%s, %s, %s)"
+                self.db_cursor.execute(query, (uid.strip(), status, timestamp))
+                self.db_conn.commit()
+            except mysql.connector.Error as e:
+                print(f"Error inserting into DB: {e}")
 
     def trigger_alarm(self):
         print("ALARM: Unlocked and empty for 15 seconds!")
@@ -64,7 +82,7 @@ class RFIDMonitor:
             if len(parts) >= 2:
                 uid = parts[0].replace("LOG:", "").strip()
                 status = parts[1].strip()
-                
+
                 self.current_status = status
 
                 if "UNLOCKED" in status:
@@ -105,9 +123,13 @@ class RFIDMonitor:
             self.cancel_alarm_timer()
             if self.ser and self.ser.is_open:
                 self.ser.close()
+            if self.db_conn:
+                self.db_cursor.close()
+                self.db_conn.close()
 
     def main(self):
         if self.setup_serial_connection():
+            self.setup_database_connection()
             self.monitor_serial()
 
 if __name__ == "__main__":
