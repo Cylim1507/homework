@@ -1,0 +1,98 @@
+import serial
+import datetime
+import mysql.connector
+from time import sleep
+
+# Configuration
+SERIAL_PORT = '/dev/ttyUSB0'  # Update to match your Arduino's serial port (e.g., /dev/ttyS0 or COM3 on Windows)
+BAUD_RATE = 9600
+DB_CONFIG = {
+    'host': 'localhost',
+    'user': 'kali',  # Update with your MySQL username
+    'password': '',   # Update with your MySQL password
+    'database': 'rfid_tracker'  # Matches your database
+}
+
+class RFIDZoneLogger:
+    def __init__(self):
+        self.ser = None
+        self.db_conn = None
+        self.db_cursor = None
+
+    def setup_serial_connection(self):
+        """Set up serial connection to Arduino."""
+        try:
+            self.ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
+            sleep(2)  # Wait for connection to stabilize
+            print(f"Connected to {SERIAL_PORT} at {BAUD_RATE} baud")
+            return True
+        except serial.SerialException as e:
+            print(f"Failed to connect to {SERIAL_PORT}: {e}")
+            return False
+
+    def setup_database_connection(self):
+        """Set up connection to MySQL database."""
+        try:
+            self.db_conn = mysql.connector.connect(**DB_CONFIG)
+            self.db_cursor = self.db_conn.cursor()
+            print("Connected to MySQL database 'rfid_tracker'")
+        except mysql.connector.Error as e:
+            print(f"Database connection error: {e}")
+
+    def log_access(self, uid, zone, timestamp):
+        """Log RFID scan to rfid_scans table."""
+        if self.db_conn and self.db_cursor:
+            try:
+                query = "INSERT INTO rfid_scans (rfid_uid, zone, scan_time, status) VALUES (%s, %s, %s, %s)"
+                self.db_cursor.execute(query, (uid.strip(), zone, timestamp, 'Processed'))
+                self.db_conn.commit()
+                print(f"Logged to DB: UID={uid}, Zone={zone}, Time={timestamp}")
+            except mysql.connector.Error as e:
+                print(f"Error inserting into DB: {e}")
+
+    def process_serial_line(self, line):
+        """Process serial data from Arduino to extract UID and zone."""
+        if line.startswith("Scanned PICC's UID:"):
+            current_uid = line.replace("Scanned PICC's UID:", "").strip()
+            print(f"Card scanned: {current_uid}")
+            return current_uid, None  # UID found, zone not yet known
+        elif line.startswith("Reach Zone"):
+            zone = line.replace("Reach Zone ", "").strip()
+            print(f"Zone detected: {zone}")
+            return None, zone  # Zone found, UID not in this line
+        return None, None
+
+    def monitor_serial(self):
+        """Monitor serial port and log RFID scans with zones to database."""
+        print("Monitoring serial port... Press Ctrl+C to exit")
+        current_uid = None  # Track UID until zone is received
+        try:
+            while True:
+                if self.ser.in_waiting > 0:
+                    line = self.ser.readline().decode('utf-8').strip()
+                    uid, zone = self.process_serial_line(line)
+                    if uid:
+                        current_uid = uid  # Store UID until zone is received
+                    if zone and current_uid:
+                        log_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        self.log_access(current_uid, zone, log_time)
+                        current_uid = None  # Reset UID after logging
+                sleep(0.1)
+        except KeyboardInterrupt:
+            print("\nExiting...")
+        finally:
+            if self.ser and self.ser.is_open:
+                self.ser.close()
+            if self.db_conn:
+                self.db_cursor.close()
+                self.db_conn.close()
+
+    def main(self):
+        """Initialize and run the RFID zone logger."""
+        if self.setup_serial_connection():
+            self.setup_database_connection()
+            self.monitor_serial()
+
+if __name__ == "__main__":
+    logger = RFIDZoneLogger()
+    logger.main()
