@@ -20,3 +20,6 @@ INSERT INTO rfid_scans (rfid_uid, zone, scan_time, status, location_name) VALUES
 ('F3 BF AA A0', 'A', '2025-06-15 12:40:00', 'Processed', 'Entrance A'),
 ('70 45 61 1B', 'B', '2025-06-15 12:41:00', 'Processed', 'Gate B'),
 ('33 25 BC A0', 'C', '2025-06-15 12:42:00', 'Processed', 'Exit C');
+
+
+mosquitto_pub -d -q 1 -h "IP_ADDRESS_THINGSBOARD" -p "1883" -t "v1/devices/me/telemetry" -u "$DEVICE_ACCESS_TOKEN_GENERATED_IN_THINGSBOARD" -m {"Potentiometer":25}
