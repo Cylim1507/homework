@@ -23,3 +23,35 @@ INSERT INTO rfid_scans (rfid_uid, zone, scan_time, status, location_name) VALUES
 
 
 mosquitto_pub -d -q 1 -h "IP_ADDRESS_THINGSBOARD" -p "1883" -t "v1/devices/me/telemetry" -u "$DEVICE_ACCESS_TOKEN_GENERATED_IN_THINGSBOARD" -m {"Potentiometer":25}
+
+
+access token: SiL0DGWJ56TvfjnvkEXF
+
+import serial
+import paho.mqtt.client as mqtt
+import json
+import time
+
+ACCESS_TOKEN = "your_device_token_here"
+THINGSBOARD_HOST = "friend-pc-ip"  # or hostname if LAN-connected
+
+ser = serial.Serial('/dev/ttyUSB0', 9600, timeout=1)
+ser.flush()
+
+client = mqtt.Client()
+client.username_pw_set(ACCESS_TOKEN)
+client.connect(THINGSBOARD_HOST, 1883, 60)
+client.loop_start()
+
+while True:
+    if ser.in_waiting > 0:
+        line = ser.readline().decode('utf-8').strip()
+        print("Raw:", line)
+
+        try:
+            data = json.loads(line)  # Expect Arduino to send JSON string
+            client.publish("v1/devices/me/telemetry", json.dumps(data))
+        except Exception as e:
+            print("Failed to parse:", e)
+
+    time.sleep(1)
