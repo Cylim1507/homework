@@ -1,0 +1,22 @@
+-- Creating the database for RFID tracking
+CREATE DATABASE rfid_tracker;
+
+-- Use the created database
+USE rfid_tracker;
+
+-- Creating the table to store RFID scan data (FSR reading removed)
+CREATE TABLE rfid_scans (
+    scan_id INT AUTO_INCREMENT PRIMARY KEY, -- Unique ID for each scan
+    rfid_uid VARCHAR(11) NOT NULL,         -- RFID UID (e.g., "F3 BF AA A0", max 11 chars for 4 bytes in HEX with spaces)
+    zone CHAR(1) NOT NULL,                 -- Zone (A, B, or C)
+    scan_time DATETIME NOT NULL,           -- Timestamp of the scan
+    status VARCHAR(20) DEFAULT 'Processed', -- Status of the scan (e.g., Processed, Error)
+    location_name VARCHAR(50),             -- Descriptive name for the zone (optional)
+    CONSTRAINT chk_zone CHECK (zone IN ('A', 'B', 'C')) -- Ensure zone is A, B, or C
+);
+
+-- Insert example data for testing (based on specified UIDs, FSR reading removed)
+INSERT INTO rfid_scans (rfid_uid, zone, scan_time, status, location_name) VALUES
+('F3 BF AA A0', 'A', '2025-06-15 12:40:00', 'Processed', 'Entrance A'),
+('70 45 61 1B', 'B', '2025-06-15 12:41:00', 'Processed', 'Gate B'),
+('33 25 BC A0', 'C', '2025-06-15 12:42:00', 'Processed', 'Exit C');
